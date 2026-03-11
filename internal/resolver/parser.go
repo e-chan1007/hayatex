@@ -32,20 +32,31 @@ func RetrieveTLDatabase(mirrorURL string) (TLDatabase, error) {
 		return nil, fmt.Errorf("failed to retrieve TLPDB: %s", res.Status)
 	}
 
-	return parseTLPDB(res.Body)
+	db, err := parseTLPDB(res.Body)
+	return db, err
 }
 
 // Creates a new TLPackage with initialized fields
 func newTLPackage() *TLPackage {
 	return &TLPackage{
-		ArchDepends:  make(map[string][]string),
-		BinFiles:     make(map[string]*TLPackageFiles),
-		RunFiles:     &TLPackageFiles{},
-		DocFiles:     &TLPackageFiles{},
-		SrcFiles:     &TLPackageFiles{},
-		Container:    &TLContainerInfo{},
-		DocContainer: &TLContainerInfo{},
-		SrcContainer: &TLContainerInfo{},
+		Relocated:   false,
+		ArchDepends: make(map[string][]string),
+		BinFiles:    make(map[string]*TLPackageFiles),
+		RunFiles:    &TLPackageFiles{},
+		DocFiles:    &TLPackageFiles{},
+		SrcFiles:    &TLPackageFiles{},
+		Container: &TLContainerInfo{
+			Size:     0,
+			Checksum: "",
+		},
+		DocContainer: &TLContainerInfo{
+			Size:     0,
+			Checksum: "",
+		},
+		SrcContainer: &TLContainerInfo{
+			Size:     0,
+			Checksum: "",
+		},
 	}
 }
 
@@ -106,6 +117,8 @@ func parseTLPDB(reader io.Reader) (TLDatabase, error) {
 			currentPkg.Revision = val
 		case key == "shortdesc":
 			currentPkg.ShortDesc = val
+		case key == "relocated":
+			currentPkg.Relocated = true
 		case key == "containersize":
 			size, _ := strconv.ParseUint(val, 10, 64)
 			currentPkg.Container.Size = size
