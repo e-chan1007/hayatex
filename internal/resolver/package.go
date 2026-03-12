@@ -42,6 +42,30 @@ type TLPackage struct {
 // The entire TeX Live package database, mapping package names to their corresponding TLPackage structs
 type TLDatabase map[string]*TLPackage
 
+// Creates a new TLPackage with initialized fields
+func NewTLPackage() *TLPackage {
+	return &TLPackage{
+		Relocated:   false,
+		ArchDepends: make(map[string][]string),
+		BinFiles:    make(map[string]*TLPackageFiles),
+		RunFiles:    &TLPackageFiles{},
+		DocFiles:    &TLPackageFiles{},
+		SrcFiles:    &TLPackageFiles{},
+		Container: &TLContainerInfo{
+			Size:     0,
+			Checksum: "",
+		},
+		DocContainer: &TLContainerInfo{
+			Size:     0,
+			Checksum: "",
+		},
+		SrcContainer: &TLContainerInfo{
+			Size:     0,
+			Checksum: "",
+		},
+	}
+}
+
 func (p *TLPackage) ToString(config *config.Config) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "name %s\n", p.Name)

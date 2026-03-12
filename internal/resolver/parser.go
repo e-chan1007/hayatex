@@ -37,36 +37,12 @@ func RetrieveTLDatabase(mirrorURL string) (*TLDatabase, error) {
 	return db, err
 }
 
-// Creates a new TLPackage with initialized fields
-func newTLPackage() *TLPackage {
-	return &TLPackage{
-		Relocated:   false,
-		ArchDepends: make(map[string][]string),
-		BinFiles:    make(map[string]*TLPackageFiles),
-		RunFiles:    &TLPackageFiles{},
-		DocFiles:    &TLPackageFiles{},
-		SrcFiles:    &TLPackageFiles{},
-		Container: &TLContainerInfo{
-			Size:     0,
-			Checksum: "",
-		},
-		DocContainer: &TLContainerInfo{
-			Size:     0,
-			Checksum: "",
-		},
-		SrcContainer: &TLContainerInfo{
-			Size:     0,
-			Checksum: "",
-		},
-	}
-}
-
 // Parses the TLPDB file at the given path and returns a TLDatabase containing all package information.
 func parseTLPDB(reader io.Reader) (*TLDatabase, error) {
 	db := make(TLDatabase)
 	scanner := bufio.NewScanner(reader)
 
-	var currentPkg *TLPackage = newTLPackage()
+	var currentPkg *TLPackage = NewTLPackage()
 	var currentField string
 	var currentArch string
 
@@ -77,7 +53,7 @@ func parseTLPDB(reader io.Reader) (*TLDatabase, error) {
 			if currentPkg != nil && currentPkg.Name != "" {
 				db[currentPkg.Name] = currentPkg
 			}
-			currentPkg = newTLPackage()
+			currentPkg = NewTLPackage()
 			currentField = ""
 			continue
 		}

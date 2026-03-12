@@ -3,13 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strings"
 	"time"
 
 	"github.com/e-chan1007/hayatex/internal/config"
@@ -21,16 +17,33 @@ import (
 
 func main() {
 	config := &config.Config{
-		MirrorURL:       "https://mirror.ctan.org/systems/texlive/tlnet/",
-		TexDir:          "./texlive_test",
-		Arch:            "x86_64-linux",
-		InstallDocFiles: false,
-		InstallSrcFiles: false,
+		MirrorURL:          "https://mirror.ctan.org/systems/texlive/tlnet/",
+		TexDir:             "./texlive_test",
+		Arch:               utils.DetectTeXLiveArch(),
+		AddPath:            true,
+		InstallDocFiles:    false,
+		InstallSrcFiles:    false,
+		InstallForAllUsers: false,
+		SysBinDir:          "/usr/local/bin",
+		SysManDir:          "/usr/local/share/man",
+		SysInfoDir:         "/usr/local/share/info",
 	}
+
+	if config.Arch == "" {
+		log.Fatal("Unsupported architecture")
+	}
+
 	config.TexDir, _ = filepath.Abs(config.TexDir)
 
-	if os := runtime.GOOS; os == "windows" {
-		config.Arch = "windows"
+	var err error
+
+	err = utils.CheckWritePermission(config.TexDir)
+	if err != nil {
+		log.Fatalf("No write permission for the installation directory: %v", err)
+	}
+
+	if config.MirrorURL, err = utils.ResolveMirror(config.MirrorURL); err != nil {
+		log.Fatalf("Failed to resolve mirror URL: %v", err)
 	}
 
 	roots := []string{
@@ -77,82 +90,45 @@ func main() {
 	}
 	fmt.Printf("\n✅ Done! Installation took %v\n", time.Since(start))
 
-	fmtutilConfigPath, err := texconfig.GenerateFmtutilConfig(config.TexDir, deps)
-
-	if err != nil {
-		log.Printf("Failed to generate fmtutil.cnf: %v", err)
-	}
-
-	texconfig.GenerateUpdmapConfig(config.TexDir, deps)
-
-	binDir := filepath.Join(config.TexDir, "bin", config.Arch)
-
-	env := os.Environ()
-	newPath := binDir + string(os.PathListSeparator) + os.Getenv("PATH")
-	if config.Arch == "windows" {
-		perlDir := filepath.Join(config.TexDir, "tlpkg", "tlperl", "bin")
-		newPath = perlDir + string(os.PathListSeparator) + newPath
-	}
-	env = utils.SetEnv(env, "PATH", newPath)
-	env = utils.SetEnv(env, "TEXMFROOT", config.TexDir)
-	env = utils.SetEnv(env, "PERL5LIB", filepath.Join(config.TexDir, "tlpkg"))
-
 	logFile, err := os.Create(filepath.Join(config.TexDir, "install.log"))
 	if err != nil {
 		log.Printf("Failed to create log file: %v", err)
 	}
 	defer logFile.Close()
-	out := io.MultiWriter(logFile)
 
-	newCommand := func(name string, args ...string) *exec.Cmd {
-		cmdPath, err := utils.ResolveExecutable(binDir, name)
-		if err != nil {
-			log.Fatalf("Failed to resolve executable for %s: %v", name, err)
+	texCommandExecutor := utils.TeXCommandExecutor(config, logFile)
+
+	if config.AddPath {
+		start = time.Now()
+		fmt.Println("🛠️ Adding Path ...")
+		if err := texconfig.AddSystemLinks(config); err != nil {
+			log.Printf("⚠️ Adding Path failed: %v", err)
 		}
-		cmd := exec.Command(cmdPath, args...)
-		cmd.Dir = config.TexDir
-		cmd.Env = env
-		cmd.Stdout = out
-		cmd.Stderr = out
-		return cmd
+		fmt.Printf("✅ Adding Path completed in %v\n", time.Since(start))
 	}
 
-	fmt.Println("🛠️ Running tlmgr path add...")
-	execCmd := newCommand("tlmgr", "path", "add")
-	if err := execCmd.Run(); err != nil {
-		log.Printf("⚠️ tlmgr path add failed: %v", err)
+	start = time.Now()
+	fmt.Println("🛠️ Running generate language(rewritten)...")
+	if err := texconfig.GenerateLanguageConfig(config.TexDir, deps); err != nil {
+		log.Printf("⚠️ Failed to generate language config: %v", err)
 	}
+	fmt.Printf("✅ Generated language config in %v\n", time.Since(start))
 
-	fmt.Println("🛠️ Running tlmgr path add...")
-	execCmd = newCommand("tlmgr", "generate", "language")
-
-	if err := execCmd.Run(); err != nil {
-		log.Printf("⚠️ tlmgr path add failed: %v", err)
-	}
-
+	start = time.Now()
 	texconfig.GenerateLsR(config.TexDir)
+	fmt.Printf("✅ Generated ls-R in %v\n", time.Since(start))
 
-	fmt.Println("🛠️ Running fmtutil-sys --all...")
-	execCmd = newCommand("fmtutil-sys", "--all", "--cnffile", fmtutilConfigPath, "--nohash")
+	start = time.Now()
+	fmt.Println("🛠️ Running fmtutil(rewritten)...")
+	texconfig.ExecuteFormatCommands(ctx, config, deps, &texCommandExecutor)
+	fmt.Printf("✅ fmtutil(rewritten) completed in %v\n", time.Since(start))
 
-	if err := execCmd.Run(); err != nil {
-		log.Printf("⚠️ fmtutil-sys failed: %v", err)
-	}
-
-	fmt.Println("🛠️ Running updmap-sys --syncwithtrees...")
-	execCmd = newCommand("updmap-sys", "--quiet", "--syncwithtrees", "--force", "--nohash")
-	execCmd.Stdin = strings.NewReader("y\n")
-
-	if err := execCmd.Run(); err != nil {
+	start = time.Now()
+	fmt.Println("🛠️ Running updmap(rewritten)...")
+	if err := texconfig.ExecuteUpdmap(config.TexDir, deps); err != nil {
 		log.Printf("⚠️ updmap-sys failed: %v", err)
 	}
-
-	fmt.Println("🛠️ Running updmap-sys...")
-	execCmd = newCommand("updmap-sys", "--nohash")
-
-	if err := execCmd.Run(); err != nil {
-		log.Printf("⚠️ updmap-sys failed: %v", err)
-	}
+	fmt.Printf("✅ updmap-sys completed in %v\n", time.Since(start))
 
 	texconfig.GenerateLsR(config.TexDir)
 }

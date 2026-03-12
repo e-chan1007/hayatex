@@ -3,12 +3,16 @@ package downloader
 import (
 	"bytes"
 	"context"
+	"crypto/sha512"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -25,6 +29,7 @@ type downloadJob struct {
 	checksum      string
 	size          uint64
 	extractedSize uint64
+	retryCount    int8
 }
 
 type extractJob struct {
@@ -44,13 +49,10 @@ func New(config *config.Config) *Downloader {
 	tr := &http.Transport{
 		TLSHandshakeTimeout: 30 * time.Second,
 		IdleConnTimeout:     90 * time.Second,
-		MaxIdleConnsPerHost: 50,
-		MaxIdleConns:        100,
-		ReadBufferSize:      128 * 1024,
-		WriteBufferSize:     128 * 1024,
+		MaxIdleConns:        runtime.NumCPU() * 4,
 	}
 	return &Downloader{
-		maxWorkers: 16,
+		maxWorkers: runtime.NumCPU(),
 		client:     &http.Client{Transport: tr},
 		config:     config,
 	}
@@ -84,6 +86,7 @@ func (d *Downloader) EstimateDownload(packages *resolver.TLDatabase) InstallEsti
 					checksum:      pkg.Container.Checksum,
 					size:          pkg.Container.Size,
 					extractedSize: extractedSize,
+					retryCount:    0,
 				})
 			}
 			if d.config.InstallDocFiles && pkg.DocContainer.Size > 0 {
@@ -95,6 +98,7 @@ func (d *Downloader) EstimateDownload(packages *resolver.TLDatabase) InstallEsti
 					checksum:      pkg.DocContainer.Checksum,
 					size:          pkg.DocContainer.Size,
 					extractedSize: pkg.DocFiles.Size,
+					retryCount:    0,
 				})
 			}
 			if d.config.InstallSrcFiles && pkg.SrcContainer.Size > 0 {
@@ -106,6 +110,7 @@ func (d *Downloader) EstimateDownload(packages *resolver.TLDatabase) InstallEsti
 					checksum:      pkg.SrcContainer.Checksum,
 					size:          pkg.SrcContainer.Size,
 					extractedSize: pkg.SrcFiles.Size,
+					retryCount:    0,
 				})
 			}
 		}
@@ -125,34 +130,45 @@ func (d *Downloader) EstimateDownload(packages *resolver.TLDatabase) InstallEsti
 
 func (d *Downloader) InstallPackages(ctx context.Context, packages *resolver.TLDatabase, progressChan chan<- *InstallProgress) error {
 	d.EstimateDownload(packages)
-	progress := &InstallProgress{CompletedCount: 0, DownloadedSize: 0, ExtractedSize: 0}
+	progress := &InstallProgress{}
+
+	taskChan := make(chan downloadJob, len(d.downloadJobs)*2)
+	jobChan := make(chan extractJob, d.maxWorkers*2)
+
+	var pending int32 = int32(len(d.downloadJobs))
+
+	for _, job := range sortDownloadJobs(d.downloadJobs) {
+		taskChan <- job
+	}
 
 	eg, ctx := errgroup.WithContext(ctx)
-	downloadGroup, dlCtx := errgroup.WithContext(ctx)
-	jobChan := make(chan extractJob, d.maxWorkers*2)
-	dlSem := make(chan struct{}, d.maxWorkers)
 
-	eg.Go(func() error {
-		defer close(jobChan)
-		for _, job := range d.downloadJobs {
-			select {
-			case <-dlCtx.Done():
-				return dlCtx.Err()
-			case dlSem <- struct{}{}:
-				downloadGroup.Go(func() error {
-					defer func() { <-dlSem }()
-					data, err := d.download(dlCtx, &job)
-					if err != nil {
-						return err
+	for i := 0; i < d.maxWorkers; i++ {
+		eg.Go(func() error {
+			for job := range taskChan {
+				data, err := d.download(ctx, &job)
+				if err != nil {
+					if job.retryCount < 3 {
+						job.retryCount++
+						go func(j downloadJob) {
+							time.Sleep(time.Duration(1<<j.retryCount) * time.Second)
+							taskChan <- j
+						}(job)
+						continue
 					}
-					atomic.AddUint64(&progress.DownloadedSize, job.size)
-					jobChan <- extractJob{pkg: job.pkg, label: job.label, data: data}
-					return nil
-				})
+					return fmt.Errorf("failed %s: %w", job.label, err)
+				}
+				atomic.AddUint64(&progress.DownloadedSize, job.size)
+				jobChan <- extractJob{pkg: job.pkg, label: job.label, data: data}
+
+				if atomic.AddInt32(&pending, -1) == 0 {
+					close(taskChan)
+					close(jobChan)
+				}
 			}
-		}
-		return downloadGroup.Wait()
-	})
+			return nil
+		})
+	}
 
 	for i := 0; i < d.maxWorkers; i++ {
 		eg.Go(func() error {
@@ -176,38 +192,35 @@ func (d *Downloader) InstallPackages(ctx context.Context, packages *resolver.TLD
 }
 
 func (d *Downloader) download(ctx context.Context, task *downloadJob) ([]byte, error) {
-	var lastErr error
+	req, err := http.NewRequestWithContext(ctx, "GET", task.url, nil)
+	if err != nil {
+		return nil, err
+	}
 
-	for i := range 3 {
-		req, err := http.NewRequestWithContext(ctx, "GET", task.url, nil)
-		if err != nil {
-			return nil, err
-		}
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
 
-		resp, err := d.client.Do(req)
-		if err == nil {
-			if resp.StatusCode == http.StatusOK {
-				data, err := io.ReadAll(resp.Body)
-				resp.Body.Close()
-				if err == nil {
-					return data, nil
-				}
-				lastErr = err
-			} else {
-				resp.Body.Close()
-				lastErr = fmt.Errorf("status: %s", resp.Status)
-			}
-		} else {
-			lastErr = err
-		}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status: %s", resp.Status)
+	}
 
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(time.Duration(1<<(i+1)) * time.Second):
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if task.checksum != "" {
+		sum := sha512.Sum512(data)
+		actual := hex.EncodeToString(sum[:])
+		if actual != task.checksum {
+			return nil, fmt.Errorf("checksum mismatch for %s: expected %s, got %s", task.label, task.checksum, actual)
 		}
 	}
-	return nil, lastErr
+
+	return data, nil
 }
 
 func (d *Downloader) extract(ctx context.Context, job *extractJob) (uint64, error) {
@@ -261,4 +274,24 @@ func (d *Downloader) extract(ctx context.Context, job *extractJob) (uint64, erro
 		return err
 	})
 	return extractedSize, err
+}
+
+func sortDownloadJobs(jobs []downloadJob) []downloadJob {
+	simpleSortedJobs := make([]downloadJob, len(jobs))
+	copy(simpleSortedJobs, jobs)
+	slices.SortFunc(simpleSortedJobs, func(a, b downloadJob) int {
+		return int(b.size) - int(a.size)
+	})
+	sortedJobs := make([]downloadJob, len(jobs))
+	left, right := 0, len(jobs)-1
+	for i, v := range simpleSortedJobs {
+		if i%2 == 0 {
+			sortedJobs[left] = v
+			left++
+		} else {
+			sortedJobs[right] = v
+			right--
+		}
+	}
+	return sortedJobs
 }
