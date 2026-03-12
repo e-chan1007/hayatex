@@ -39,10 +39,11 @@ type extractJob struct {
 }
 
 type Downloader struct {
-	maxWorkers   int
-	client       *http.Client
-	config       *config.Config
-	downloadJobs []downloadJob
+	maxDownloadWorkers int
+	maxExtractWorkers  int
+	client             *http.Client
+	config             *config.Config
+	downloadJobs       []downloadJob
 }
 
 func New(config *config.Config) *Downloader {
@@ -52,9 +53,10 @@ func New(config *config.Config) *Downloader {
 		MaxIdleConns:        runtime.NumCPU() * 4,
 	}
 	return &Downloader{
-		maxWorkers: runtime.NumCPU(),
-		client:     &http.Client{Transport: tr},
-		config:     config,
+		maxDownloadWorkers: runtime.NumCPU() * 2,
+		maxExtractWorkers:  runtime.NumCPU(),
+		client:             &http.Client{Transport: tr},
+		config:             config,
 	}
 }
 
@@ -129,11 +131,12 @@ func (d *Downloader) EstimateDownload(packages *resolver.TLDatabase) InstallEsti
 }
 
 func (d *Downloader) InstallPackages(ctx context.Context, packages *resolver.TLDatabase, progressChan chan<- *InstallProgress) error {
+	timer := time.Now()
 	d.EstimateDownload(packages)
 	progress := &InstallProgress{}
 
 	taskChan := make(chan downloadJob, len(d.downloadJobs)*2)
-	jobChan := make(chan extractJob, d.maxWorkers*2)
+	jobChan := make(chan extractJob, d.maxExtractWorkers*2)
 
 	var pending int32 = int32(len(d.downloadJobs))
 
@@ -143,7 +146,7 @@ func (d *Downloader) InstallPackages(ctx context.Context, packages *resolver.TLD
 
 	eg, ctx := errgroup.WithContext(ctx)
 
-	for i := 0; i < d.maxWorkers; i++ {
+	for i := 0; i < d.maxDownloadWorkers; i++ {
 		eg.Go(func() error {
 			for job := range taskChan {
 				data, err := d.download(ctx, &job)
@@ -162,6 +165,7 @@ func (d *Downloader) InstallPackages(ctx context.Context, packages *resolver.TLD
 				jobChan <- extractJob{pkg: job.pkg, label: job.label, data: data}
 
 				if atomic.AddInt32(&pending, -1) == 0 {
+					fmt.Printf("\n⏱️  Download phase completed: %s\n", time.Since(timer))
 					close(taskChan)
 					close(jobChan)
 				}
@@ -170,7 +174,7 @@ func (d *Downloader) InstallPackages(ctx context.Context, packages *resolver.TLD
 		})
 	}
 
-	for i := 0; i < d.maxWorkers; i++ {
+	for i := 0; i < d.maxExtractWorkers; i++ {
 		eg.Go(func() error {
 			for job := range jobChan {
 				extractedSize, err := d.extract(ctx, &job)
@@ -187,6 +191,7 @@ func (d *Downloader) InstallPackages(ctx context.Context, packages *resolver.TLD
 	}
 
 	err := eg.Wait()
+	fmt.Printf("\n⏱️  Extract phase completed: %s\n", time.Since(timer))
 	close(progressChan)
 	return err
 }
@@ -280,7 +285,7 @@ func sortDownloadJobs(jobs []downloadJob) []downloadJob {
 	simpleSortedJobs := make([]downloadJob, len(jobs))
 	copy(simpleSortedJobs, jobs)
 	slices.SortFunc(simpleSortedJobs, func(a, b downloadJob) int {
-		return int(b.size) - int(a.size)
+		return int(a.size) - int(b.size)
 	})
 	sortedJobs := make([]downloadJob, len(jobs))
 	left, right := 0, len(jobs)-1

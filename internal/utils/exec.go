@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/e-chan1007/hayatex/internal/config"
 )
@@ -77,7 +78,10 @@ func (ce CommandExecutor) injectOptions(cmd *exec.Cmd) {
 	cmd.Stderr = *ce.stderr
 }
 
-var resolvedExecutables = make(map[string]string)
+var (
+	resolvedExecutables = make(map[string]string)
+	resolvedMu          sync.RWMutex
+)
 
 func ResolveExecutable(paths ...string) (string, error) {
 	path := filepath.Join(paths...)
@@ -85,7 +89,10 @@ func ResolveExecutable(paths ...string) (string, error) {
 		return path, nil
 	}
 
-	if resolved, ok := resolvedExecutables[path]; ok {
+	resolvedMu.RLock()
+	resolved, ok := resolvedExecutables[path]
+	resolvedMu.RUnlock()
+	if ok {
 		return resolved, nil
 	}
 
@@ -96,7 +103,9 @@ func ResolveExecutable(paths ...string) (string, error) {
 	for _, ext := range candidates {
 		fullPath := filepath.Join(filepath.Dir(path), filepath.Base(path)+ext)
 		if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
+			resolvedMu.Lock()
 			resolvedExecutables[path] = fullPath
+			resolvedMu.Unlock()
 			return fullPath, nil
 		}
 	}
