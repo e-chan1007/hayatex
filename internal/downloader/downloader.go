@@ -6,83 +6,147 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 	"time"
 
+	"github.com/e-chan1007/hayatex/internal/config"
 	"github.com/e-chan1007/hayatex/internal/resolver"
 	"github.com/mholt/archives"
 	"golang.org/x/sync/errgroup"
 )
 
-type pkgJob struct {
-	pkg  *resolver.TLPackage
-	data []byte
+type downloadJob struct {
+	pkg           *resolver.TLPackage
+	label         string
+	url           string
+	checksum      string
+	size          uint64
+	extractedSize uint64
+}
+
+type extractJob struct {
+	pkg   *resolver.TLPackage
+	label string
+	data  []byte
 }
 
 type Downloader struct {
-	BaseURL    string
-	TargetDir  string
-	MaxWorkers int
-	client     *http.Client
+	maxWorkers   int
+	client       *http.Client
+	config       *config.Config
+	downloadJobs []downloadJob
 }
 
-func New(baseURL, targetDir string) *Downloader {
+func New(config *config.Config) *Downloader {
 	tr := &http.Transport{
 		TLSHandshakeTimeout: 30 * time.Second,
 		IdleConnTimeout:     90 * time.Second,
-		// コネクションプールをWorkersより多めに確保して、
-		// 展開中のハンドシェイク待ちを解消する
 		MaxIdleConnsPerHost: 50,
 		MaxIdleConns:        100,
-		ReadBufferSize:      128 * 1024, // 128KB
+		ReadBufferSize:      128 * 1024,
 		WriteBufferSize:     128 * 1024,
 	}
 	return &Downloader{
-		BaseURL:    baseURL,
-		TargetDir:  targetDir,
-		MaxWorkers: 16, // CPUコア数に合わせて少し多めに
+		maxWorkers: 16,
 		client:     &http.Client{Transport: tr},
+		config:     config,
 	}
 }
 
-func (d *Downloader) InstallPackages(ctx context.Context, pkgs map[string]*resolver.TLPackage) error {
-	eg, ctx := errgroup.WithContext(ctx)
+type InstallEstimate struct {
+	TotalDownloads     int
+	TotalDownloadSize  uint64
+	TotalExtractedSize uint64
+}
 
-	// パッケージリストのフィルタリング
-	var taskList []*resolver.TLPackage
-	for _, p := range pkgs {
-		if p.Container.Size > 0 {
-			taskList = append(taskList, p)
+type InstallProgress struct {
+	CompletedCount uint32
+	DownloadedSize uint64
+	ExtractedSize  uint64
+}
+
+func (d *Downloader) EstimateDownload(packages *resolver.TLDatabase) InstallEstimate {
+	if len(d.downloadJobs) == 0 {
+		for _, pkg := range *packages {
+			if pkg.Container.Size > 0 {
+				url, _ := url.JoinPath(d.config.MirrorURL, fmt.Sprintf("archive/%s.tar.xz", pkg.Name))
+				extractedSize := pkg.RunFiles.Size
+				if binFiles, ok := pkg.BinFiles[d.config.Arch]; ok {
+					extractedSize += binFiles.Size
+				}
+				d.downloadJobs = append(d.downloadJobs, downloadJob{
+					pkg:           pkg,
+					label:         pkg.Name,
+					url:           url,
+					checksum:      pkg.Container.Checksum,
+					size:          pkg.Container.Size,
+					extractedSize: extractedSize,
+				})
+			}
+			if d.config.InstallDocFiles && pkg.DocContainer.Size > 0 {
+				url, _ := url.JoinPath(d.config.MirrorURL, fmt.Sprintf("archive/%s-doc.tar.xz", pkg.Name))
+				d.downloadJobs = append(d.downloadJobs, downloadJob{
+					pkg:           pkg,
+					label:         pkg.Name + "-doc",
+					url:           url,
+					checksum:      pkg.DocContainer.Checksum,
+					size:          pkg.DocContainer.Size,
+					extractedSize: pkg.DocFiles.Size,
+				})
+			}
+			if d.config.InstallSrcFiles && pkg.SrcContainer.Size > 0 {
+				url, _ := url.JoinPath(d.config.MirrorURL, fmt.Sprintf("archive/%s-src.tar.xz", pkg.Name))
+				d.downloadJobs = append(d.downloadJobs, downloadJob{
+					pkg:           pkg,
+					label:         pkg.Name + "-src",
+					url:           url,
+					checksum:      pkg.SrcContainer.Checksum,
+					size:          pkg.SrcContainer.Size,
+					extractedSize: pkg.SrcFiles.Size,
+				})
+			}
 		}
 	}
-	total := len(taskList)
-	var completed int32
+	totalSize := uint64(0)
+	extractedSize := uint64(0)
+	for _, job := range d.downloadJobs {
+		totalSize += job.size
+		extractedSize += job.extractedSize
+	}
+	return InstallEstimate{
+		TotalDownloads:     len(d.downloadJobs),
+		TotalDownloadSize:  totalSize,
+		TotalExtractedSize: extractedSize << 10, // KB to B
+	}
+}
 
-	// ダウンロード済みデータを展開Workerに渡すパイプライン
-	jobChan := make(chan pkgJob, d.MaxWorkers*2)
+func (d *Downloader) InstallPackages(ctx context.Context, packages *resolver.TLDatabase, progressChan chan<- *InstallProgress) error {
+	d.EstimateDownload(packages)
+	progress := &InstallProgress{CompletedCount: 0, DownloadedSize: 0, ExtractedSize: 0}
 
-	// --- Step 1: ダウンロードWorker群 (I/O Bound) ---
-	// 展開より速く終わるように、ダウンロードの並列度を確保
+	eg, ctx := errgroup.WithContext(ctx)
 	downloadGroup, dlCtx := errgroup.WithContext(ctx)
-	dlSem := make(chan struct{}, d.MaxWorkers) // 同時ダウンロード数
+	jobChan := make(chan extractJob, d.maxWorkers*2)
+	dlSem := make(chan struct{}, d.maxWorkers)
 
 	eg.Go(func() error {
 		defer close(jobChan)
-		for _, p := range taskList {
-			p := p
+		for _, job := range d.downloadJobs {
 			select {
 			case <-dlCtx.Done():
 				return dlCtx.Err()
 			case dlSem <- struct{}{}:
 				downloadGroup.Go(func() error {
 					defer func() { <-dlSem }()
-					data, err := d.download(dlCtx, p)
+					data, err := d.download(dlCtx, &job)
 					if err != nil {
 						return err
 					}
-					jobChan <- pkgJob{pkg: p, data: data}
+					atomic.AddUint64(&progress.DownloadedSize, job.size)
+					jobChan <- extractJob{pkg: job.pkg, label: job.label, data: data}
 					return nil
 				})
 			}
@@ -90,33 +154,32 @@ func (d *Downloader) InstallPackages(ctx context.Context, pkgs map[string]*resol
 		return downloadGroup.Wait()
 	})
 
-	// --- Step 2: 展開Worker群 (CPU Bound) ---
-	// XZ展開は重いので、ここも並列で回す
-	for i := 0; i < d.MaxWorkers; i++ {
+	for i := 0; i < d.maxWorkers; i++ {
 		eg.Go(func() error {
 			for job := range jobChan {
-				if err := d.extract(ctx, job.pkg, job.data); err != nil {
+				extractedSize, err := d.extract(ctx, &job)
+				if err != nil {
 					return err
 				}
-				curr := atomic.AddInt32(&completed, 1)
-				// 10個おきに表示して画面更新のI/Oを節約
-				if curr%10 == 0 || int(curr) == total {
-					fmt.Printf("[%d/%d] %s\n", curr, total, job.pkg.Name)
-				}
+				atomic.AddUint32(&progress.CompletedCount, 1)
+				atomic.AddUint64(&progress.ExtractedSize, extractedSize)
+
+				progressChan <- progress
 			}
 			return nil
 		})
 	}
 
-	return eg.Wait()
+	err := eg.Wait()
+	close(progressChan)
+	return err
 }
 
-func (d *Downloader) download(ctx context.Context, pkg *resolver.TLPackage) ([]byte, error) {
-	url := d.BaseURL + "archive/" + pkg.Name + ".tar.xz"
-
+func (d *Downloader) download(ctx context.Context, task *downloadJob) ([]byte, error) {
 	var lastErr error
+
 	for i := range 3 {
-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", task.url, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -141,25 +204,26 @@ func (d *Downloader) download(ctx context.Context, pkg *resolver.TLPackage) ([]b
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(time.Duration(i+1) * time.Second):
+		case <-time.After(time.Duration(1<<(i+1)) * time.Second):
 		}
 	}
-	return nil, fmt.Errorf("[%s] download failed: %v", pkg.Name, lastErr)
+	return nil, lastErr
 }
 
-func (d *Downloader) extract(ctx context.Context, pkg *resolver.TLPackage, data []byte) error {
+func (d *Downloader) extract(ctx context.Context, job *extractJob) (uint64, error) {
 	format := archives.CompressedArchive{
 		Compression: archives.Xz{},
 		Extraction:  archives.Tar{},
 	}
 
 	lastDir := ""
-	return format.Extract(ctx, bytes.NewReader(data), func(ctx context.Context, f archives.FileInfo) error {
+	extractedSize := uint64(0)
+	err := format.Extract(ctx, bytes.NewReader(job.data), func(ctx context.Context, f archives.FileInfo) error {
 		var targetPath string
-		if pkg.Relocated {
-			targetPath = filepath.Join(d.TargetDir, "texmf-dist", f.NameInArchive)
+		if job.pkg.Relocated {
+			targetPath = filepath.Join(d.config.TexDir, "texmf-dist", f.NameInArchive)
 		} else {
-			targetPath = filepath.Join(d.TargetDir, f.NameInArchive)
+			targetPath = filepath.Join(d.config.TexDir, f.NameInArchive)
 		}
 
 		if f.IsDir() {
@@ -179,7 +243,6 @@ func (d *Downloader) extract(ctx context.Context, pkg *resolver.TLPackage, data 
 			return os.Symlink(f.LinkTarget, targetPath)
 		}
 
-		// ファイル書き出し
 		out, err := os.OpenFile(targetPath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, f.Mode())
 		if err != nil {
 			return err
@@ -192,7 +255,10 @@ func (d *Downloader) extract(ctx context.Context, pkg *resolver.TLPackage, data 
 		}
 		defer rc.Close()
 
-		_, err = io.Copy(out, rc)
+		written, err := io.Copy(out, rc)
+		extractedSize += uint64(written)
+
 		return err
 	})
+	return extractedSize, err
 }

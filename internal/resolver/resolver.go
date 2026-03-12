@@ -1,8 +1,8 @@
 package resolver
 
 // Resolves dependencies for the given root package names and architecture, returning a map of package names to their corresponding TLPackage structs.
-func ResolveDependencies(rootNames []string, db TLDatabase, arch string) TLDatabase {
-	resolved := make(map[string]*TLPackage)
+func ResolveDependencies(rootNames []string, db *TLDatabase, arch string) *TLDatabase {
+	resolved := make(TLDatabase)
 	var walk func(name string)
 
 	walk = func(name string) {
@@ -10,7 +10,7 @@ func ResolveDependencies(rootNames []string, db TLDatabase, arch string) TLDatab
 			return
 		}
 
-		pkg, ok := db[name]
+		pkg, ok := (*db)[name]
 		if !ok {
 			return
 		}
@@ -18,7 +18,7 @@ func ResolveDependencies(rootNames []string, db TLDatabase, arch string) TLDatab
 		resolved[name] = pkg
 
 		archPkgName := pkg.Name + "." + arch
-		if _, ok := db[archPkgName]; ok {
+		if _, ok := (*db)[archPkgName]; ok {
 			walk(archPkgName)
 		}
 
@@ -37,5 +37,5 @@ func ResolveDependencies(rootNames []string, db TLDatabase, arch string) TLDatab
 		walk(name)
 	}
 
-	return resolved
+	return &resolved
 }

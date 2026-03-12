@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/e-chan1007/hayatex/internal/config"
 )
 
 // The list of contained files and their total size for a package
@@ -40,7 +42,7 @@ type TLPackage struct {
 // The entire TeX Live package database, mapping package names to their corresponding TLPackage structs
 type TLDatabase map[string]*TLPackage
 
-func (p *TLPackage) ToString() string {
+func (p *TLPackage) ToString(config *config.Config) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "name %s\n", p.Name)
 
@@ -123,9 +125,11 @@ func (p *TLPackage) ToString() string {
 		} else {
 			fmt.Fprintln(&sb, "docfiles")
 		}
-		for _, f := range p.DocFiles.Files {
-			f = strings.ReplaceAll(f, "RELOC", "texmf-dist")
-			fmt.Fprintf(&sb, " %s\n", f)
+		if config.InstallDocFiles {
+			for _, f := range p.DocFiles.Files {
+				f = strings.ReplaceAll(f, "RELOC", "texmf-dist")
+				fmt.Fprintf(&sb, " %s\n", f)
+			}
 		}
 	}
 	if p.SrcFiles != nil {
@@ -134,9 +138,11 @@ func (p *TLPackage) ToString() string {
 		} else {
 			fmt.Fprintln(&sb, "srcfiles")
 		}
-		for _, f := range p.SrcFiles.Files {
-			f = strings.ReplaceAll(f, "RELOC", "texmf-dist")
-			fmt.Fprintf(&sb, " %s\n", f)
+		if config.InstallSrcFiles {
+			for _, f := range p.SrcFiles.Files {
+				f = strings.ReplaceAll(f, "RELOC", "texmf-dist")
+				fmt.Fprintf(&sb, " %s\n", f)
+			}
 		}
 	}
 
@@ -145,7 +151,7 @@ func (p *TLPackage) ToString() string {
 	return sb.String()
 }
 
-func (db TLDatabase) ToString() string {
+func (db TLDatabase) ToString(config *config.Config) string {
 	var sb strings.Builder
 	keys := make([]string, 0, len(db))
 	for k := range db {
@@ -158,7 +164,7 @@ func (db TLDatabase) ToString() string {
 		if p == nil {
 			continue
 		}
-		sb.WriteString(p.ToString())
+		sb.WriteString(p.ToString(config))
 	}
 
 	return sb.String()

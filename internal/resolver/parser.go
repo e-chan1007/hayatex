@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -20,8 +21,8 @@ func findOption(parts []string, key string) (string, bool) {
 }
 
 // Retrieves the TLPDB file from the specified mirror URL and parses it into a TLDatabase struct.
-func RetrieveTLDatabase(mirrorURL string) (TLDatabase, error) {
-	mirrorURL = strings.TrimSuffix(mirrorURL, "/") + "/tlpkg/texlive.tlpdb"
+func RetrieveTLDatabase(mirrorURL string) (*TLDatabase, error) {
+	mirrorURL, _ = url.JoinPath(mirrorURL, "tlpkg/texlive.tlpdb")
 	res, err := http.Get(mirrorURL)
 	if err != nil {
 		return nil, err
@@ -61,7 +62,7 @@ func newTLPackage() *TLPackage {
 }
 
 // Parses the TLPDB file at the given path and returns a TLDatabase containing all package information.
-func parseTLPDB(reader io.Reader) (TLDatabase, error) {
+func parseTLPDB(reader io.Reader) (*TLDatabase, error) {
 	db := make(TLDatabase)
 	scanner := bufio.NewScanner(reader)
 
@@ -179,5 +180,5 @@ func parseTLPDB(reader io.Reader) (TLDatabase, error) {
 		}
 	}
 
-	return db, scanner.Err()
+	return &db, scanner.Err()
 }
