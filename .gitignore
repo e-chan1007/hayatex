@@ -32,3 +32,5 @@ go.work.sum
 # .vscode/
 
 /hayatex
+
+/texlive_test

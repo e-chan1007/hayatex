@@ -66,6 +66,16 @@ func NewTLPackage() *TLPackage {
 	}
 }
 
+func (db *TLDatabase) PickByCategory(category string) *TLDatabase {
+	results := make(TLDatabase)
+	for _, pkg := range *db {
+		if pkg.Category == category {
+			results[pkg.Name] = pkg
+		}
+	}
+	return &results
+}
+
 func (p *TLPackage) ToString(config *config.Config) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "name %s\n", p.Name)

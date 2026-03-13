@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,11 +40,14 @@ type extractJob struct {
 }
 
 type Downloader struct {
-	maxDownloadWorkers int
-	maxExtractWorkers  int
-	client             *http.Client
-	config             *config.Config
-	downloadJobs       []downloadJob
+	maxDownloadWorkers  int
+	maxExtractWorkers   int
+	minSplitSize        uint64
+	numSegments         int
+	client              *http.Client
+	config              *config.Config
+	downloadJobs        []downloadJob
+	connectionSemaphore chan struct{}
 }
 
 func New(config *config.Config) *Downloader {
@@ -53,10 +57,13 @@ func New(config *config.Config) *Downloader {
 		MaxIdleConns:        runtime.NumCPU() * 4,
 	}
 	return &Downloader{
-		maxDownloadWorkers: runtime.NumCPU() * 2,
-		maxExtractWorkers:  runtime.NumCPU(),
-		client:             &http.Client{Transport: tr},
-		config:             config,
+		maxDownloadWorkers:  runtime.NumCPU() * 2,
+		maxExtractWorkers:   runtime.NumCPU(),
+		minSplitSize:        20 * 1024 * 1024, // 20 MB
+		numSegments:         4,
+		client:              &http.Client{Transport: tr},
+		config:              config,
+		connectionSemaphore: make(chan struct{}, runtime.NumCPU()*2),
 	}
 }
 
@@ -131,16 +138,15 @@ func (d *Downloader) EstimateDownload(packages *resolver.TLDatabase) InstallEsti
 }
 
 func (d *Downloader) InstallPackages(ctx context.Context, packages *resolver.TLDatabase, progressChan chan<- *InstallProgress) error {
-	timer := time.Now()
 	d.EstimateDownload(packages)
 	progress := &InstallProgress{}
 
 	taskChan := make(chan downloadJob, len(d.downloadJobs)*2)
-	jobChan := make(chan extractJob, d.maxExtractWorkers*2)
+	jobChan := make(chan extractJob, len(d.downloadJobs)*2)
 
 	var pending int32 = int32(len(d.downloadJobs))
 
-	for _, job := range sortDownloadJobs(d.downloadJobs) {
+	for _, job := range sortDownloadJobs(d.downloadJobs, d.maxDownloadWorkers) {
 		taskChan <- job
 	}
 
@@ -149,7 +155,7 @@ func (d *Downloader) InstallPackages(ctx context.Context, packages *resolver.TLD
 	for i := 0; i < d.maxDownloadWorkers; i++ {
 		eg.Go(func() error {
 			for job := range taskChan {
-				data, err := d.download(ctx, &job)
+				data, err := d.download(ctx, &job, job.retryCount >= 2)
 				if err != nil {
 					if job.retryCount < 3 {
 						job.retryCount++
@@ -165,7 +171,6 @@ func (d *Downloader) InstallPackages(ctx context.Context, packages *resolver.TLD
 				jobChan <- extractJob{pkg: job.pkg, label: job.label, data: data}
 
 				if atomic.AddInt32(&pending, -1) == 0 {
-					fmt.Printf("\n⏱️  Download phase completed: %s\n", time.Since(timer))
 					close(taskChan)
 					close(jobChan)
 				}
@@ -191,32 +196,31 @@ func (d *Downloader) InstallPackages(ctx context.Context, packages *resolver.TLD
 	}
 
 	err := eg.Wait()
-	fmt.Printf("\n⏱️  Extract phase completed: %s\n", time.Since(timer))
 	close(progressChan)
 	return err
 }
 
-func (d *Downloader) download(ctx context.Context, task *downloadJob) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", task.url, nil)
+func (d *Downloader) doHTTPRequest(ctx context.Context, req *http.Request) (*http.Response, error) {
+	select {
+	case d.connectionSemaphore <- struct{}{}:
+		defer func() { <-d.connectionSemaphore }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return d.client.Do(req)
+}
+
+func (d *Downloader) download(ctx context.Context, task *downloadJob, forceSingle bool) ([]byte, error) {
+	var err error
+	var data []byte
+	if task.size >= d.minSplitSize && !forceSingle {
+		data, err = d.downloadParallel(ctx, task)
+	} else {
+		data, err = d.downloadSingle(ctx, task)
+	}
 	if err != nil {
 		return nil, err
 	}
-
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status: %s", resp.Status)
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
 	if task.checksum != "" {
 		sum := sha512.Sum512(data)
 		actual := hex.EncodeToString(sum[:])
@@ -225,6 +229,68 @@ func (d *Downloader) download(ctx context.Context, task *downloadJob) ([]byte, e
 		}
 	}
 
+	return data, nil
+}
+
+func (d *Downloader) downloadSingle(ctx context.Context, task *downloadJob) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", task.url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := d.doHTTPRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status: %s", resp.Status)
+	}
+	data := make([]byte, task.size)
+	_, err = io.ReadFull(resp.Body, data)
+	return data, err
+}
+
+func (d *Downloader) downloadParallel(ctx context.Context, task *downloadJob) ([]byte, error) {
+	headReq, _ := http.NewRequestWithContext(ctx, "HEAD", task.url, nil)
+	headResp, err := d.doHTTPRequest(ctx, headReq)
+	if err != nil || headResp.Header.Get("Accept-Ranges") != "bytes" {
+		return nil, fmt.Errorf("range not supported")
+	}
+	data := make([]byte, task.size)
+	segSize := task.size / uint64(d.numSegments)
+	eg, ctx := errgroup.WithContext(ctx)
+
+	for i := 0; i < d.numSegments; i++ {
+		i := i
+		start := uint64(i) * segSize
+		end := start + segSize - 1
+		if i == d.numSegments-1 {
+			end = task.size - 1
+		}
+
+		eg.Go(func() error {
+			req, _ := http.NewRequestWithContext(ctx, "GET", task.url, nil)
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+
+			resp, err := d.doHTTPRequest(ctx, req)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusPartialContent {
+				return fmt.Errorf("unexpected status: %s", resp.Status)
+			}
+			_, err = io.ReadFull(resp.Body, data[start:end+1])
+			return err
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
 	return data, nil
 }
 
@@ -281,22 +347,46 @@ func (d *Downloader) extract(ctx context.Context, job *extractJob) (uint64, erro
 	return extractedSize, err
 }
 
-func sortDownloadJobs(jobs []downloadJob) []downloadJob {
+func sortDownloadJobs(jobs []downloadJob, workerCount int) []downloadJob {
 	simpleSortedJobs := make([]downloadJob, len(jobs))
 	copy(simpleSortedJobs, jobs)
 	slices.SortFunc(simpleSortedJobs, func(a, b downloadJob) int {
-		return int(a.size) - int(b.size)
+		return int(b.size) - int(a.size)
 	})
+	totalSize := uint64(0)
+	for _, job := range simpleSortedJobs {
+		totalSize += job.size
+	}
 	sortedJobs := make([]downloadJob, len(jobs))
-	left, right := 0, len(jobs)-1
-	for i, v := range simpleSortedJobs {
-		if i%2 == 0 {
-			sortedJobs[left] = v
-			left++
+	largeJobs := []downloadJob{}
+	smallJobs := []downloadJob{}
+	largeJobsTotalSize := float64(0)
+	largeJobsThreshold := float64(totalSize) * 0.8
+
+	for _, job := range simpleSortedJobs {
+		if largeJobsTotalSize < largeJobsThreshold {
+			largeJobs = append(largeJobs, job)
+			largeJobsTotalSize += float64(job.size)
 		} else {
-			sortedJobs[right] = v
-			right--
+			smallJobs = append(smallJobs, job)
 		}
 	}
+
+	ratio := math.Max(math.Ceil(float64(len(largeJobs))/float64(len(jobs))), float64(workerCount))
+
+	i, j, k := 0, 0, 0
+	for k < len(jobs) {
+		for r := 0; r < int(ratio) && i < len(smallJobs); r++ {
+			sortedJobs[k] = smallJobs[i]
+			i++
+			k++
+		}
+		if j < len(largeJobs) {
+			sortedJobs[k] = largeJobs[j]
+			j++
+			k++
+		}
+	}
+
 	return sortedJobs
 }

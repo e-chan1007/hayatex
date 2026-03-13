@@ -17,7 +17,6 @@ func AddSystemLinks(config *config.Config) error {
 		if err == nil {
 			return nil
 		}
-		fmt.Printf("⚠️ Warning: Failed to create system symlinks: %v\n", err)
 	}
 	return addUnixProfilePath(config)
 }
@@ -40,9 +39,7 @@ func addUnixProfilePath(config *config.Config) error {
 		if strings.Contains(string(content), line) {
 			continue
 		}
-		if err = os.WriteFile(profilePath, []byte(line), 0644); err == nil {
-			fmt.Printf("✅ Added PATH to %s\n", profilePath)
-		}
+		os.WriteFile(profilePath, []byte(line), 0644)
 	}
 	return fmt.Errorf("failed to update any profile files")
 
@@ -64,8 +61,7 @@ func addUnixSymlinks(config *config.Config) error {
 		}
 
 		if err := os.MkdirAll(group.dstBase, 0755); err != nil {
-			fmt.Printf("⚠️ Skip: No permission to create %s\n", group.dstBase)
-			continue
+			continue // Skip if we can't create the target directory (e.g., due to permissions)
 		}
 
 		err := filepath.Walk(group.srcBase, func(path string, info os.FileInfo, err error) error {
@@ -85,7 +81,7 @@ func addUnixSymlinks(config *config.Config) error {
 		})
 
 		if err != nil {
-			fmt.Printf("⚠️ Warning during symlink for %s: %v\n", group.dstBase, err)
+			return err
 		}
 	}
 	return nil

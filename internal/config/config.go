@@ -11,4 +11,5 @@ type Config struct {
 	SysBinDir          string
 	SysManDir          string
 	SysInfoDir         string
+	RootPackages       []string
 }

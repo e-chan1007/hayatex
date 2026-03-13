@@ -22,7 +22,6 @@ func AddSystemLinks(config *config.Config) error {
 	if config.InstallForAllUsers {
 		key, err = registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\Session Manager\Environment`, registry.QUERY_VALUE|registry.SET_VALUE)
 		if err != nil {
-			fmt.Printf("⚠️ Warning: Failed to open system environment key: %v\n", err)
 			key = registry.Key(0)
 		}
 	}
