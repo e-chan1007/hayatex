@@ -8,36 +8,36 @@ import (
 	"time"
 
 	"github.com/e-chan1007/hayatex/internal/config"
-	"github.com/e-chan1007/hayatex/internal/downloader"
 	"github.com/e-chan1007/hayatex/internal/resolver"
 	"github.com/e-chan1007/hayatex/internal/texconfig"
 	"github.com/e-chan1007/hayatex/internal/utils"
 )
 
 const (
-	decideMirrorJob  = "decide_mirror"
-	parseTLPDBJob    = "parse_tlpdb"
-	downloadJob      = "download_packages"
-	addPathJob       = "add_path"
-	genLangConfigJob = "gen_lang_config"
-	genLsRInitialJob = "gen_lsr_initial"
-	formatTexJob     = "format_tex"
-	updmapJob        = "updmap"
-	genLsRFinalJob   = "gen_lsr_final"
+	decideMirrorJobKey = iota
+	parseTLPDBJobKey
+	downloadJobKey
+	extractJobKey
+	addPathJobKey
+	genLangConfigJobKey
+	genLsRInitialJobKey
+	updmapJobKey
+	formatTexJobKey
+	genLsRFinalJobKey
 )
 
-func Install(config *config.Config, roots []string, logWriter io.Writer, jobChan chan<- *InstallJobList) error {
+func Install(config *config.Config, tlpdb *resolver.TLDatabase, roots []string, logWriter io.Writer, jobChan chan<- *InstallJobList) error {
 	installJobs := InstallJobList{
 		Jobs: []InstallJob{
-			NewInstallJob(decideMirrorJob, "Decide mirror", false),
-			NewInstallJob(parseTLPDBJob, "Parse TeX Live Package Database", false),
-			NewInstallJob(downloadJob, "Download packages", true),
-			NewInstallJob(addPathJob, "Adding PATH", false),
-			NewInstallJob(genLangConfigJob, "Generating language config", false),
-			NewInstallJob(genLsRInitialJob, "Generating ls-R(Initial)", false),
-			NewInstallJob(formatTexJob, "Formatting TeX", false),
-			NewInstallJob(updmapJob, "Updating font map files", false),
-			NewInstallJob(genLsRFinalJob, "Generating ls-R(Final)", false),
+			NewInstallJob(parseTLPDBJobKey, "Parse TeX Live Package Database", false),
+			NewInstallJob(downloadJobKey, "Download packages", true),
+			NewInstallJob(extractJobKey, "Extract packages ", true),
+			NewInstallJob(addPathJobKey, "Add PATH", false),
+			NewInstallJob(genLangConfigJobKey, "Generate language config", false),
+			NewInstallJob(genLsRInitialJobKey, "Generate ls-R(Initial)", false),
+			NewInstallJob(updmapJobKey, "Update font map files", false),
+			NewInstallJob(formatTexJobKey, "Format TeX", false),
+			NewInstallJob(genLsRFinalJobKey, "Generate ls-R(Final)", false),
 		},
 		channel: jobChan,
 	}
@@ -55,102 +55,106 @@ func Install(config *config.Config, roots []string, logWriter io.Writer, jobChan
 		return fmt.Errorf("No write permission for the installation directory: %v", err)
 	}
 
-	installJobs.UpdateJobStatus(decideMirrorJob, InstallJobExecuting)
-	if config.MirrorURL, err = utils.ResolveMirror(config.MirrorURL); err != nil {
-		return fmt.Errorf("Failed to resolve mirror URL: %v", err)
-	}
-	installJobs.UpdateJobStatusWithMessage(decideMirrorJob, InstallJobCompleted, config.MirrorURL)
-
-	installJobs.UpdateJobStatus(parseTLPDBJob, InstallJobExecuting)
-	tlpdb, err := resolver.RetrieveTLDatabase(config.MirrorURL)
-	if err != nil {
-		return fmt.Errorf("Failed to retrieve TLDatabase: %v", err)
-	}
+	installJobs.UpdateJobStatus(parseTLPDBJobKey, InstallJobExecuting)
 
 	deps := resolver.ResolveDependencies(roots, tlpdb, config.Arch)
 	if config.Arch == "windows" {
-		(*deps)["tlperl.windows"] = (*tlpdb)["tlperl.windows"]
+		(*deps)["tlperl.windows"] = tlpdb.Packages["tlperl.windows"]
 	}
 
-	dl := downloader.New(config)
+	dl := NewDownloader(config)
 	downloadEstimate := dl.EstimateDownload(deps)
-	installJobs.UpdateJobStatusWithMessage(parseTLPDBJob, InstallJobCompleted, fmt.Sprintf("%d packages(%d files)", len(*deps), downloadEstimate.TotalDownloads))
+	installJobs.UpdateJobStatusWithMessage(parseTLPDBJobKey, InstallJobCompleted, fmt.Sprintf("TeX Live %s - %d packages(%d files)", tlpdb.Year, len(*deps), downloadEstimate.TotalDownloads))
 
-	installJobs.UpdateJobStatus(downloadJob, InstallJobExecuting)
+	installJobs.UpdateJobStatus(downloadJobKey, InstallJobExecuting)
 	start := time.Now()
-	progressChan := make(chan *downloader.InstallProgress)
+	downloadProgressChan := make(chan *InstallProgress)
+	extractProgressChan := make(chan *InstallProgress)
+	onProgress := func(job int, format string, progress *InstallProgress) {
+		installJobs.UpdateJobStatusWithMessage(job, InstallJobExecuting, fmt.Sprintf(format, progress.Count, progress.TotalCount, utils.FormatBytes(progress.Size, "B"), utils.FormatBytes(progress.TotalSize, "B")))
+		progressValue := float64(progress.Count) / float64(progress.TotalCount)
+		if progress.Count < progress.TotalCount && progressValue >= 0.99 {
+			progressValue = 0.99
+		}
+		installJobs.UpdateJobProgress(job, progressValue)
+	}
 	go func() {
-		for progress := range progressChan {
-			installJobs.UpdateJobStatusWithMessage(downloadJob, InstallJobExecuting, fmt.Sprintf("%d / %d downloaded", progress.CompletedCount, downloadEstimate.TotalDownloads))
-			progressValue := float64(progress.CompletedCount) / float64(downloadEstimate.TotalDownloads)
-			if progress.CompletedCount < uint32(downloadEstimate.TotalDownloads) && progressValue >= 0.99 {
-				progressValue = 0.99
-			}
-			installJobs.UpdateJobProgress(downloadJob, progressValue)
+		for progress := range downloadProgressChan {
+			onProgress(downloadJobKey, "Downloading... (%d/%d, %s/%s)", progress)
+		}
+	}()
+	go func() {
+		for progress := range extractProgressChan {
+			onProgress(extractJobKey, "Extracting...  (%d/%d, %s/%s)", progress)
 		}
 	}()
 
 	ctx := context.Background()
-	if err := dl.InstallPackages(ctx, deps, progressChan); err != nil {
+	if err := dl.InstallPackages(ctx, deps, downloadProgressChan, extractProgressChan); err != nil {
 		return fmt.Errorf("Failed to install packages: %v", err)
 	}
 
 	if err := texconfig.SaveLocalTLPDB(config, tlpdb, deps); err != nil {
 		return fmt.Errorf("Failed to write texlive.tlpdb: %v", err)
 	}
-	installJobs.UpdateJobStatusWithMessage(downloadJob, InstallJobCompleted, fmt.Sprintf("Downloaded %d packages", len(*deps)))
+	texconfig.GenerateTexmfConfig(config)
+	installJobs.UpdateJobStatusWithMessage(downloadJobKey, InstallJobCompleted, "")
+	installJobs.UpdateJobStatusWithMessage(extractJobKey, InstallJobCompleted, fmt.Sprintf("Installed %d packages", len(*deps)))
 
 	texCommandExecutor := utils.TeXCommandExecutor(config, logWriter)
 
 	if config.AddPath {
-		installJobs.UpdateJobStatus(addPathJob, InstallJobExecuting)
+		installJobs.UpdateJobStatus(addPathJobKey, InstallJobExecuting)
 		start = time.Now()
 		if err := texconfig.AddSystemLinks(config); err != nil {
 			fmt.Fprintf(logWriter, "⚠️ Adding Path failed: %v", err)
-			installJobs.UpdateJobStatusWithMessage(addPathJob, InstallJobCompleted, "Failed")
+			installJobs.UpdateJobStatusWithMessage(addPathJobKey, InstallJobCompleted, "Failed")
 		} else {
 			fmt.Fprintf(logWriter, "✅ PATH added in %v\n", time.Since(start))
-			installJobs.UpdateJobStatus(addPathJob, InstallJobCompleted)
+			installJobs.UpdateJobStatus(addPathJobKey, InstallJobCompleted)
 		}
 	} else {
-		installJobs.UpdateJobStatusWithMessage(addPathJob, InstallJobCompleted, "Skipped")
+		installJobs.UpdateJobStatusWithMessage(addPathJobKey, InstallJobCompleted, "Skipped")
 	}
 
-	installJobs.UpdateJobStatus(genLangConfigJob, InstallJobExecuting)
+	installJobs.UpdateJobStatus(genLangConfigJobKey, InstallJobExecuting)
 	start = time.Now()
 	if err := texconfig.GenerateLanguageConfig(config.TexDir, deps); err != nil {
 		fmt.Fprintf(logWriter, "⚠️ Failed to generate language config: %v", err)
-		installJobs.UpdateJobStatusWithMessage(genLangConfigJob, InstallJobCompleted, "Failed")
+		installJobs.UpdateJobStatusWithMessage(genLangConfigJobKey, InstallJobCompleted, "Failed")
 	} else {
 		fmt.Fprintf(logWriter, "✅ Generated language config in %v\n", time.Since(start))
-		installJobs.UpdateJobStatus(genLangConfigJob, InstallJobCompleted)
+		installJobs.UpdateJobStatus(genLangConfigJobKey, InstallJobCompleted)
 	}
 
-	installJobs.UpdateJobStatus(genLsRInitialJob, InstallJobExecuting)
+	installJobs.UpdateJobStatus(genLsRInitialJobKey, InstallJobExecuting)
 	start = time.Now()
 	texconfig.GenerateLsR(config.TexDir)
 	fmt.Fprintf(logWriter, "✅ Generated ls-R in %v\n", time.Since(start))
-	installJobs.UpdateJobStatus(genLsRInitialJob, InstallJobCompleted)
+	installJobs.UpdateJobStatus(genLsRInitialJobKey, InstallJobCompleted)
 
-	installJobs.UpdateJobStatus(formatTexJob, InstallJobExecuting)
-	start = time.Now()
-	texconfig.ExecuteFormatCommands(ctx, config, deps, &texCommandExecutor)
-	fmt.Fprintf(logWriter, "✅ fmtutil(rewritten) completed in %v\n", time.Since(start))
-	installJobs.UpdateJobStatus(formatTexJob, InstallJobCompleted)
-
-	installJobs.UpdateJobStatus(updmapJob, InstallJobExecuting)
+	installJobs.UpdateJobStatus(updmapJobKey, InstallJobExecuting)
 	start = time.Now()
 	if err := texconfig.ExecuteUpdmap(config.TexDir, deps); err != nil {
 		fmt.Fprintf(logWriter, "⚠️ updmap failed: %v", err)
-		installJobs.UpdateJobStatusWithMessage(updmapJob, InstallJobCompleted, "Failed")
+		installJobs.UpdateJobStatusWithMessage(updmapJobKey, InstallJobCompleted, "Failed")
 	} else {
 		fmt.Fprintf(logWriter, "✅ updmap completed in %v\n", time.Since(start))
-		installJobs.UpdateJobStatus(updmapJob, InstallJobCompleted)
+		installJobs.UpdateJobStatus(updmapJobKey, InstallJobCompleted)
 	}
 
-	installJobs.UpdateJobStatus(genLsRFinalJob, InstallJobExecuting)
+	installJobs.UpdateJobStatus(formatTexJobKey, InstallJobExecuting)
+	start = time.Now()
+	if err := texconfig.ExecuteFormatCommands(ctx, config, deps, &texCommandExecutor); err != nil {
+		fmt.Fprintf(logWriter, "⚠️ fmtutil(rewritten) failed: %v", err)
+		installJobs.UpdateJobStatusWithMessage(formatTexJobKey, InstallJobCompleted, "Failed")
+	}
+	fmt.Fprintf(logWriter, "✅ fmtutil(rewritten) completed in %v\n", time.Since(start))
+	installJobs.UpdateJobStatus(formatTexJobKey, InstallJobCompleted)
+
+	installJobs.UpdateJobStatus(genLsRFinalJobKey, InstallJobExecuting)
 	texconfig.GenerateLsR(config.TexDir)
-	installJobs.UpdateJobStatus(genLsRFinalJob, InstallJobCompleted)
+	installJobs.UpdateJobStatus(genLsRFinalJobKey, InstallJobCompleted)
 
 	return nil
 }

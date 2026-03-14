@@ -3,7 +3,6 @@ package texconfig
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,16 +25,17 @@ func (j *FormatJob) ToString() string {
 	return fmt.Sprintf("%s %s %s %s", j.Name, j.Engine, j.Patterns, j.Options)
 }
 
-func ExecuteFormatCommands(ctx context.Context, config *config.Config, deps *resolver.TLDatabase, ce *utils.CommandExecutor) {
+func ExecuteFormatCommands(ctx context.Context, config *config.Config, deps *resolver.TLPackageList, ce *utils.CommandExecutor) error {
 	jobs := extractFormatJobs(deps)
 	generateFmtutilConfig(config.TexDir, jobs)
 	err := runFmtutilCommands(ctx, config, ce, jobs)
 	if err != nil {
-		log.Fatalf("Error occurred while running fmtutil commands: %v", err)
+		return fmt.Errorf("Failed to execute format commands: %v", err)
 	}
+	return nil
 }
 
-func extractFormatJobs(deps *resolver.TLDatabase) []*FormatJob {
+func extractFormatJobs(deps *resolver.TLPackageList) []*FormatJob {
 	var jobs []*FormatJob
 	for _, pkg := range *deps {
 		for _, execLine := range pkg.Executes {

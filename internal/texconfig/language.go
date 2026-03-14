@@ -19,7 +19,7 @@ type LanguageJob struct {
 	Synonyms       []string
 }
 
-func GenerateLanguageConfig(texdir string, deps *resolver.TLDatabase) error {
+func GenerateLanguageConfig(texdir string, deps *resolver.TLPackageList) error {
 	langDir := filepath.Join(texdir, "texmf-var", "tex", "generic", "config")
 	if err := os.MkdirAll(langDir, 0755); err != nil {
 		return err

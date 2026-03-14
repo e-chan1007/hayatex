@@ -136,7 +136,7 @@ func (page InstallPage) StartInstall() {
 		}
 	}()
 
-	err := installer.Install(page.context.Config, page.context.Config.RootPackages, logWriter, jobChan)
+	err := installer.Install(page.context.Config, page.context.TLDatabase, page.context.Config.RootPackages, logWriter, jobChan)
 	if err != nil {
 		page.context.Program.Send(LogLineMsg(fmt.Sprintf("❌ Error: %v", err)))
 	}

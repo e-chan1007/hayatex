@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -13,27 +14,40 @@ import (
 )
 
 func main() {
-	config := &config.Config{
-		MirrorURL:          "https://mirror.ctan.org/systems/texlive/tlnet/",
-		TexDir:             "./texlive_test",
-		Arch:               utils.DetectTeXLiveArch(),
-		AddPath:            true,
-		InstallDocFiles:    false,
-		InstallSrcFiles:    false,
-		InstallForAllUsers: false,
-		SysBinDir:          "/usr/local/bin",
-		SysManDir:          "/usr/local/share/man",
-		SysInfoDir:         "/usr/local/share/info",
+	profile := flag.String("profile", "", "Path to configuration profile")
+	flag.Parse()
+
+	cfg := (*config.Config)(nil)
+	if *profile != "" {
+		var err error
+		cfg, err = config.LoadProfile(*profile)
+		if err != nil {
+			log.Fatalf("Failed to load profile: %v", err)
+		}
+	} else {
+		cfg = config.NewDefaultConfig()
+	}
+	if cfg.Arch == "" {
+		cfg.Arch = utils.DetectTeXLiveArch()
 	}
 
 	fmt.Println("Retrieving TeX Live package database...")
 
-	tlpdb, err := resolver.RetrieveTLDatabase(config.MirrorURL)
+	var err error
+	cfg.MirrorURL, err = utils.ResolveMirror(cfg.MirrorURL)
+	if err != nil {
+		log.Fatalf("Failed to resolve mirror URL: %v", err)
+	}
+
+	tlpdb, err := resolver.RetrieveTLDatabase(cfg.MirrorURL)
 	if err != nil {
 		log.Fatal(err)
 	}
+	if cfg.TexDir == "" {
+		cfg.SetDefaultTeXDir(tlpdb.Year)
+	}
 
-	m := ui.NewRootModel(config, tlpdb)
+	m := ui.NewRootModel(cfg, tlpdb, *profile != "")
 	p := tea.NewProgram(m)
 	m.SetProgram(p)
 

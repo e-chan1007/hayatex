@@ -13,21 +13,27 @@ import (
 )
 
 type RootModel struct {
-	context     *context.RootContext
-	selectPage  tea.Model
-	installPage tea.Model
+	context            *context.RootContext
+	selectPage         tea.Model
+	installPage        tea.Model
+	installImmediately bool
 }
 
 var rootModel *RootModel
 
-func NewRootModel(config *config.Config, db *resolver.TLDatabase) RootModel {
+func NewRootModel(config *config.Config, db *resolver.TLDatabase, installImmediately bool) RootModel {
 	ctx := context.NewRootContext(config, db)
 	selectPage := pages.NewSelectPackagePage(db)
 	installPage := pages.NewInstallPage(&ctx)
+	ctx.ActivePage = context.SelectPage
+	if installImmediately {
+		ctx.ActivePage = context.InstallPage
+	}
 	rootModel = &RootModel{
-		context:     &ctx,
-		selectPage:  selectPage,
-		installPage: installPage,
+		context:            &ctx,
+		selectPage:         selectPage,
+		installPage:        installPage,
+		installImmediately: installImmediately,
 	}
 	return *rootModel
 }
@@ -41,6 +47,14 @@ func (m RootModel) SetProgram(program *tea.Program) {
 }
 
 func (m RootModel) Init() tea.Cmd {
+	if m.installImmediately {
+		return tea.Batch(
+			m.installPage.Init(),
+			func() tea.Msg {
+				return pages.StartInstallMsg{}
+			},
+		)
+	}
 	return nil
 }
 

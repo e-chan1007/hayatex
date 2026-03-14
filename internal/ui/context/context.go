@@ -21,6 +21,7 @@ type RootContext struct {
 	Style          *lipgloss.Style
 	TerminalWidth  int
 	TerminalHeight int
+	TLDatabase     *resolver.TLDatabase
 }
 
 var rootContext *RootContext
@@ -34,6 +35,7 @@ func NewRootContext(config *config.Config, db *resolver.TLDatabase) RootContext 
 		Program:        nil,
 		TerminalWidth:  80,
 		TerminalHeight: 24,
+		TLDatabase:     db,
 	}
 	return *rootContext
 }

@@ -39,7 +39,9 @@ func RetrieveTLDatabase(mirrorURL string) (*TLDatabase, error) {
 
 // Parses the TLPDB file at the given path and returns a TLDatabase containing all package information.
 func parseTLPDB(reader io.Reader) (*TLDatabase, error) {
-	db := make(TLDatabase)
+	db := TLDatabase{
+		Packages: make(TLPackageList),
+	}
 	scanner := bufio.NewScanner(reader)
 
 	var currentPkg *TLPackage = NewTLPackage()
@@ -51,10 +53,15 @@ func parseTLPDB(reader io.Reader) (*TLDatabase, error) {
 
 		if line == "" {
 			if currentPkg != nil && currentPkg.Name != "" {
-				db[currentPkg.Name] = currentPkg
+				db.Packages[currentPkg.Name] = currentPkg
 			}
 			currentPkg = NewTLPackage()
 			currentField = ""
+			continue
+		}
+
+		if strings.HasPrefix(line, "depend release/") {
+			db.Year = strings.TrimPrefix(line, "depend release/")
 			continue
 		}
 

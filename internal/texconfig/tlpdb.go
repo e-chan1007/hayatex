@@ -11,12 +11,12 @@ import (
 	"github.com/e-chan1007/hayatex/internal/utils"
 )
 
-func SaveLocalTLPDB(config *config.Config, tlpdb *resolver.TLDatabase, deps *resolver.TLDatabase) error {
-	saveDeps := make(resolver.TLDatabase)
+func SaveLocalTLPDB(config *config.Config, tlpdb *resolver.TLDatabase, deps *resolver.TLPackageList) error {
+	saveDeps := make(resolver.TLPackageList)
 	for name := range *deps {
-		saveDeps[name] = (*tlpdb)[name]
+		saveDeps[name] = tlpdb.Packages[name]
 	}
-	saveDeps["00texlive.config"] = (*tlpdb)["00texlive.config"]
+	saveDeps["00texlive.config"] = tlpdb.Packages["00texlive.config"]
 	saveDeps["00texlive.installation"] = createTeXLiveInstallationConfig(config)
 
 	f, err := os.Create(filepath.Join(config.TexDir, "tlpkg/texlive.tlpdb"))

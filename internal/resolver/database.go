@@ -39,8 +39,14 @@ type TLPackage struct {
 	SrcContainer *TLContainerInfo
 }
 
+// A mapping of package names to their corresponding TLPackage structs
+type TLPackageList map[string]*TLPackage
+
 // The entire TeX Live package database, mapping package names to their corresponding TLPackage structs
-type TLDatabase map[string]*TLPackage
+type TLDatabase struct {
+	Year     string
+	Packages TLPackageList
+}
 
 // Creates a new TLPackage with initialized fields
 func NewTLPackage() *TLPackage {
@@ -66,9 +72,9 @@ func NewTLPackage() *TLPackage {
 	}
 }
 
-func (db *TLDatabase) PickByCategory(category string) *TLDatabase {
-	results := make(TLDatabase)
-	for _, pkg := range *db {
+func (db *TLDatabase) PickByCategory(category string) *TLPackageList {
+	results := make(TLPackageList)
+	for _, pkg := range db.Packages {
 		if pkg.Category == category {
 			results[pkg.Name] = pkg
 		}
@@ -185,16 +191,16 @@ func (p *TLPackage) ToString(config *config.Config) string {
 	return sb.String()
 }
 
-func (db TLDatabase) ToString(config *config.Config) string {
+func (packages TLPackageList) ToString(config *config.Config) string {
 	var sb strings.Builder
-	keys := make([]string, 0, len(db))
-	for k := range db {
+	keys := make([]string, 0, len(packages))
+	for k := range packages {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
 	for _, k := range keys {
-		p := db[k]
+		p := packages[k]
 		if p == nil {
 			continue
 		}

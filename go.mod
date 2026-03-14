@@ -11,7 +11,7 @@ require (
 )
 
 require (
-	charm.land/lipgloss/v2 v2.0.0 // indirect
+	charm.land/lipgloss/v2 v2.0.0
 	github.com/STARRY-S/zip v0.2.3 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect

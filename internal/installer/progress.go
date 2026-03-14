@@ -9,7 +9,7 @@ const (
 )
 
 type InstallJob struct {
-	key         string
+	key         int
 	Name        string
 	Status      string
 	Message     string
@@ -18,7 +18,7 @@ type InstallJob struct {
 	Progress    float64
 }
 
-func NewInstallJob(key string, name string, hasProgress bool) InstallJob {
+func NewInstallJob(key int, name string, hasProgress bool) InstallJob {
 	return InstallJob{
 		key:         key,
 		Name:        name,
@@ -34,7 +34,7 @@ type InstallJobList struct {
 	channel chan<- *InstallJobList
 }
 
-func (jl InstallJobList) UpdateJobStatus(jobKey, status string) {
+func (jl InstallJobList) UpdateJobStatus(jobKey int, status string) {
 	for i, job := range jl.Jobs {
 		if job.key == jobKey {
 			jl.Jobs[i].Status = status
@@ -45,7 +45,7 @@ func (jl InstallJobList) UpdateJobStatus(jobKey, status string) {
 	}
 }
 
-func (jl InstallJobList) UpdateJobStatusWithMessage(jobKey, status, message string) {
+func (jl InstallJobList) UpdateJobStatusWithMessage(jobKey int, status, message string) {
 	for i, job := range jl.Jobs {
 		if job.key == jobKey {
 			jl.Jobs[i].Status = status
@@ -57,7 +57,7 @@ func (jl InstallJobList) UpdateJobStatusWithMessage(jobKey, status, message stri
 	}
 }
 
-func (jl InstallJobList) UpdateJobProgress(jobKey string, progress float64) {
+func (jl InstallJobList) UpdateJobProgress(jobKey int, progress float64) {
 	for i, job := range jl.Jobs {
 		if job.key == jobKey {
 			jl.Jobs[i].Progress = progress

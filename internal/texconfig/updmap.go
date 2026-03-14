@@ -72,7 +72,7 @@ func resolveMapName(rawName string, vars map[string]string) string {
 	})
 }
 
-func generateUpdmapConfig(texdir string, deps *resolver.TLDatabase) (map[string][][]byte, error) {
+func generateUpdmapConfig(texdir string, deps *resolver.TLPackageList) (map[string][][]byte, error) {
 	updmapDir := filepath.Join(texdir, "texmf-config", "web2c")
 	if err := os.MkdirAll(updmapDir, 0755); err != nil {
 		return nil, err
@@ -128,7 +128,7 @@ func generateUpdmapConfig(texdir string, deps *resolver.TLDatabase) (map[string]
 	return typeContents, nil
 }
 
-func ExecuteUpdmap(texdir string, deps *resolver.TLDatabase) error {
+func ExecuteUpdmap(texdir string, deps *resolver.TLPackageList) error {
 	typeContents, err := generateUpdmapConfig(texdir, deps)
 	if err != nil {
 		return err
