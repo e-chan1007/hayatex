@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"atomicgo.dev/isadmin"
+	"github.com/e-chan1007/hayatex/internal/mirror"
 )
 
 type Config struct {
@@ -26,11 +29,11 @@ type Config struct {
 
 func NewDefaultConfig() *Config {
 	return &Config{
-		MirrorURL:          "https://mirror.ctan.org/systems/texlive/tlnet/",
+		MirrorURL:          mirror.DefaultRepositoryURL,
 		TexDir:             "",
 		TexmfLocalDir:      "",
 		Arch:               "",
-		AddPath:            false,
+		AddPath:            true,
 		InstallDocFiles:    false,
 		InstallSrcFiles:    false,
 		InstallForAllUsers: false,
@@ -41,9 +44,21 @@ func NewDefaultConfig() *Config {
 }
 
 func (c *Config) SetDefaultTeXDir(year string) {
-	c.TexDir = filepath.Join("/usr/local/texlive", year)
+	isAdmin := isadmin.Check()
+	homeDir, _ := os.UserHomeDir()
+
 	if runtime.GOOS == "windows" {
-		c.TexDir = filepath.Join("C:\\texlive", year)
+		if isAdmin {
+			c.TexDir = filepath.Join("C:\\texlive", year)
+		} else {
+			c.TexDir = filepath.Join(homeDir, "texlive", year)
+		}
+	} else {
+		if isAdmin {
+			c.TexDir = filepath.Join("/usr/local/texlive", year)
+		} else {
+			c.TexDir = filepath.Join(homeDir, "texlive", year)
+		}
 	}
 	c.TexmfLocalDir = filepath.Join(c.TexDir, "../texmf-local")
 }
@@ -85,14 +100,12 @@ func LoadProfile(path string) (*Config, error) {
 			config.InstallSrcFiles = (val == "1")
 		case key == "option_path":
 			config.AddPath = (val == "1")
-		case key == "option_sys_bin":
+		case key == "tlpdbopt_sys_bin":
 			config.SysBinDir = val
-		case key == "option_sys_man":
+		case key == "tlpdbopt_sys_man":
 			config.SysManDir = val
-		case key == "option_sys_info":
+		case key == "tlpdbopt_sys_info":
 			config.SysInfoDir = val
-		case key == "tlpobj_repository":
-			config.MirrorURL = val
 		case key == "tlpdbopt_install_docfiles":
 			config.InstallDocFiles = (val == "1")
 		case key == "tlpdbopt_install_srcfiles":

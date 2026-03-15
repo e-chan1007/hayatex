@@ -3,15 +3,19 @@ module github.com/e-chan1007/hayatex
 go 1.26.1
 
 require (
-	charm.land/bubbles/v2 v2.0.0
-	charm.land/bubbletea/v2 v2.0.2
+	charm.land/lipgloss/v2 v2.0.1
 	github.com/mholt/archives v0.1.5
 	golang.org/x/sync v0.20.0
-	golang.org/x/sys v0.41.0
+	golang.org/x/sys v0.42.0
 )
 
 require (
-	charm.land/lipgloss/v2 v2.0.0
+	atomicgo.dev/isadmin v1.1.1
+	charm.land/bubbles/v2 v2.0.0
+	charm.land/bubbletea/v2 v2.0.2
+)
+
+require (
 	github.com/STARRY-S/zip v0.2.3 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect

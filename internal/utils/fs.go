@@ -3,7 +3,6 @@ package utils
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 )
 
 func CheckWritePermission(dir string) error {
@@ -11,13 +10,15 @@ func CheckWritePermission(dir string) error {
 		return fmt.Errorf("could not create directory: %w", err)
 	}
 
-	testFile := filepath.Join(dir, ".hayatex_tmp")
-	f, err := os.Create(testFile)
+	f, err := os.CreateTemp(dir, ".hayatex_tmp_*")
 	if err != nil {
 		return fmt.Errorf("directory is not writable: %w", err)
 	}
-	f.Close()
-	os.Remove(testFile)
+	name := f.Name()
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("directory is not writable: %w", err)
+	}
+	_ = os.Remove(name)
 
 	return nil
 }

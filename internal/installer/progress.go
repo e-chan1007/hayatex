@@ -4,6 +4,7 @@ import "time"
 
 const (
 	InstallJobPending   = "pending"
+	InstallJobSkipped   = "skipped"
 	InstallJobExecuting = "executing"
 	InstallJobCompleted = "completed"
 )

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// SetEnv は環境変数のスライスに対して、指定したキーの値を更新または追加します
+// Update environment variable in the given env slice
 func SetEnv(env []string, key, value string) []string {
 	prefix := key + "="
 	newEntry := fmt.Sprintf("%s=%s", key, value)

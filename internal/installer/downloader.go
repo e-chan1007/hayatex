@@ -133,7 +133,7 @@ func (d *Downloader) EstimateDownload(packages *resolver.TLPackageList) InstallE
 	if len(d.downloadJobs) == 0 {
 		for _, pkg := range *packages {
 			if pkg.Container.Size > 0 {
-				url, _ := url.JoinPath(d.config.MirrorURL, fmt.Sprintf("archive/%s.tar.xz", pkg.Name))
+				url, _ := url.JoinPath(d.config.MirrorURL, fmt.Sprintf("systems/texlive/tlnet/archive/%s.tar.xz", pkg.Name))
 				extractedSize := pkg.RunFiles.Size
 				if binFiles, ok := pkg.BinFiles[d.config.Arch]; ok {
 					extractedSize += binFiles.Size
@@ -148,7 +148,7 @@ func (d *Downloader) EstimateDownload(packages *resolver.TLPackageList) InstallE
 				})
 			}
 			if d.config.InstallDocFiles && pkg.DocContainer.Size > 0 {
-				url, _ := url.JoinPath(d.config.MirrorURL, fmt.Sprintf("archive/%s-doc.tar.xz", pkg.Name))
+				url, _ := url.JoinPath(d.config.MirrorURL, fmt.Sprintf("systems/texlive/tlnet/archive/%s-doc.tar.xz", pkg.Name))
 				d.downloadJobs = append(d.downloadJobs, downloadJob{
 					pkg:           pkg,
 					label:         pkg.Name + "-doc",
@@ -159,7 +159,7 @@ func (d *Downloader) EstimateDownload(packages *resolver.TLPackageList) InstallE
 				})
 			}
 			if d.config.InstallSrcFiles && pkg.SrcContainer.Size > 0 {
-				url, _ := url.JoinPath(d.config.MirrorURL, fmt.Sprintf("archive/%s-src.tar.xz", pkg.Name))
+				url, _ := url.JoinPath(d.config.MirrorURL, fmt.Sprintf("systems/texlive/tlnet/archive/%s-src.tar.xz", pkg.Name))
 				d.downloadJobs = append(d.downloadJobs, downloadJob{
 					pkg:           pkg,
 					label:         pkg.Name + "-src",
@@ -547,7 +547,7 @@ func sortDownloadJobs(jobs []downloadJob, workerCount int) []downloadJob {
 		}
 	}
 
-	ratio := math.Max(math.Ceil(float64(len(largeJobs))/float64(len(jobs))), float64(workerCount))
+	ratio := max(math.Ceil(float64(len(largeJobs))/float64(len(jobs))), float64(workerCount))
 
 	i, j, k := 0, 0, 0
 	for k < len(jobs) {

@@ -22,7 +22,7 @@ func findOption(parts []string, key string) (string, bool) {
 
 // Retrieves the TLPDB file from the specified mirror URL and parses it into a TLDatabase struct.
 func RetrieveTLDatabase(mirrorURL string) (*TLDatabase, error) {
-	mirrorURL, _ = url.JoinPath(mirrorURL, "tlpkg/texlive.tlpdb")
+	mirrorURL, _ = url.JoinPath(mirrorURL, "systems/texlive/tlnet/tlpkg/texlive.tlpdb")
 	res, err := http.Get(mirrorURL)
 	if err != nil {
 		return nil, err
