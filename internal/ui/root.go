@@ -208,6 +208,9 @@ func StartInstallWizard(cfg *config.Config, autoInstall bool) {
 		} else {
 			fmt.Println("Error running program:", m.(*rootModel).Err)
 		}
+		if utils.IsLaunchedByGui() && !autoInstall {
+			utils.WaitForAnyKey("Press any key to exit...")
+		}
 		os.Exit(1)
 	}
 	fmt.Println()
@@ -217,7 +220,13 @@ func StartInstallWizard(cfg *config.Config, autoInstall bool) {
 	}
 	if !m.(*rootModel).isCompleted && m.(*rootModel).Err != nil {
 		fmt.Printf("❌️ Installation failed with error: %v\n", m.(*rootModel).Err)
+		if utils.IsLaunchedByGui() && !autoInstall {
+			utils.WaitForAnyKey("Press any key to exit...")
+		}
 		os.Exit(1)
 	}
 	fmt.Println("✅ Installation completed successfully!")
+	if utils.IsLaunchedByGui() && !autoInstall {
+		utils.WaitForAnyKey("Press any key to exit...")
+	}
 }

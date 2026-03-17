@@ -2,6 +2,7 @@ package texconfig
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,8 +30,9 @@ func SaveLocalTLPDB(config *config.Config, tlpdb *resolver.TLDatabase, deps *res
 }
 
 func createTeXLiveInstallationConfig(config *config.Config) *resolver.TLPackage {
+	location, _ := url.JoinPath(config.MirrorURL, "systems/texlive/tlnet")
 	depends := []string{
-		fmt.Sprintf("opt_location:%s", config.MirrorURL + "/systems/texlive/tlnet"),
+		fmt.Sprintf("opt_location:%s", location),
 		fmt.Sprintf("opt_install_docfiles:%d", utils.BoolToInt(config.InstallDocFiles)),
 		fmt.Sprintf("opt_install_srcfiles:%d", utils.BoolToInt(config.InstallSrcFiles)),
 		"opt_create_formats:1",

@@ -62,7 +62,6 @@ func parseTLPDB(reader io.Reader) (*TLDatabase, error) {
 
 		if strings.HasPrefix(line, "depend release/") {
 			db.Year = strings.TrimPrefix(line, "depend release/")
-			continue
 		}
 
 		if strings.HasPrefix(line, " ") {
