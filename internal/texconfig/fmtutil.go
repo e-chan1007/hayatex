@@ -29,9 +29,11 @@ func (j *FormatJob) ToString() string {
 func ExecuteFormatCommands(ctx context.Context, config *config.Config, deps *resolver.TLPackageList, ce *utils.CommandExecutor) error {
 	jobs := extractFormatJobs(deps)
 	generateFmtutilConfig(config.TexDir, jobs)
-	// configPath, _ := generateFmtutilConfig(config.TexDir, jobs)
+	configPath, _ := generateFmtutilConfig(config.TexDir, jobs)
+	if config.CompatMode {
+		return runFmtutilCommand(ctx, config, ce, configPath)
+	}
 	err := runFmtutilCommands(ctx, config, ce, jobs)
-	// err := runFmtutilCommand(ctx, config, ce, configPath)
 	if err != nil {
 		return fmt.Errorf("Failed to execute format commands: %v", err)
 	}
@@ -100,7 +102,7 @@ func parseAddFormat(formatLine string) *FormatJob {
 }
 
 func runFmtutilCommand(ctx context.Context, config *config.Config, ce *utils.CommandExecutor, configPath string) error {
-	cmd := ce.NewCommandContext(ctx, "fmtutil-sys", fmt.Sprintf("--cnffile=%s", configPath), "--all")
+	cmd := ce.NewCommandContext(ctx, "fmtutil-sys", fmt.Sprintf("--cnffile=%s", configPath), "--all", "--nohash")
 	cmd.Dir = config.TexDir
 	return cmd.Run()
 }
@@ -122,14 +124,11 @@ func runFmtutilCommands(ctx context.Context, config *config.Config, ce *utils.Co
 				"-jobname=" + job.Name,
 				"-progname=" + job.Name,
 			}
+			if (job.Engine == "uptex" || job.Engine == "euptex") && (strings.HasPrefix(job.Name, "ep") || strings.HasPrefix(job.Name, "p")) {
+				args = append(args, "-kanji-internal=sjis")
+			}
 			if job.Options != "" {
 				args = append(args, strings.Fields(job.Options)...)
-			}
-			// if job.Engine == "uptex" || job.Engine == "euptex" {
-			// 	args = append(args, "-kanji-internal=sjis")
-			// }
-			if job.Patterns != "" && job.Patterns != "-" {
-				args = append(args, job.Patterns)
 			}
 			var outputBuffer bytes.Buffer
 			fmt.Fprintf(&outputBuffer, "Executing format command for %s: %s %s\n", job.Name, job.Engine, strings.Join(args, " "))
@@ -140,7 +139,7 @@ func runFmtutilCommands(ctx context.Context, config *config.Config, ce *utils.Co
 			cmd.Stderr = &outputBuffer
 			err := cmd.Run()
 			if err != nil {
-				outputBuffer.WriteString(fmt.Sprintf("Error executing format command for %s: %v\n", job.Name, err))
+				fmt.Fprintf(&outputBuffer, "Error executing format command for %s: %v\n", job.Name, err)
 				stdout.Write(outputBuffer.Bytes())
 				return fmt.Errorf("Failed to run command for format %s: %v", job.Name, err)
 			}

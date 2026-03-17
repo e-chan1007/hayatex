@@ -25,6 +25,7 @@ type Config struct {
 	SysInfoDir         string
 	RootPackages       []string
 	IsPortable         bool
+	CompatMode         bool
 }
 
 func NewDefaultConfig() *Config {
@@ -40,6 +41,9 @@ func NewDefaultConfig() *Config {
 		SysBinDir:          "/usr/local/bin",
 		SysManDir:          "/usr/local/share/man",
 		SysInfoDir:         "/usr/local/share/info",
+		RootPackages:       []string{},
+		IsPortable:         false,
+		CompatMode:         false,
 	}
 }
 
@@ -94,10 +98,6 @@ func LoadProfile(path string) (*Config, error) {
 			if val != "scheme-custom" {
 				config.RootPackages = append(config.RootPackages, val)
 			}
-		case key == "option_doc":
-			config.InstallDocFiles = (val == "1")
-		case key == "option_src":
-			config.InstallSrcFiles = (val == "1")
 		case key == "option_path":
 			config.AddPath = (val == "1")
 		case key == "tlpdbopt_sys_bin":
@@ -106,9 +106,9 @@ func LoadProfile(path string) (*Config, error) {
 			config.SysManDir = val
 		case key == "tlpdbopt_sys_info":
 			config.SysInfoDir = val
-		case key == "tlpdbopt_install_docfiles":
+		case key == "tlpdbopt_install_docfiles", key == "option_docfiles":
 			config.InstallDocFiles = (val == "1")
-		case key == "tlpdbopt_install_srcfiles":
+		case key == "tlpdbopt_install_srcfiles", key == "option_srcfiles":
 			config.InstallSrcFiles = (val == "1")
 		case key == "instopt_portable":
 			config.AddPath = false

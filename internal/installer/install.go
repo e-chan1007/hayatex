@@ -132,6 +132,7 @@ func Install(config *config.Config, tlpdb *resolver.TLDatabase, roots []string, 
 	if err := texconfig.GenerateLanguageConfig(config.TexDir, deps); err != nil {
 		fmt.Fprintf(logWriter, "⚠️ Failed to generate language config: %v", err)
 		installJobs.UpdateJobStatusWithMessage(genLangConfigJobKey, InstallJobCompleted, "Failed")
+		return err
 	} else {
 		installJobs.UpdateJobStatus(genLangConfigJobKey, InstallJobCompleted)
 	}
@@ -143,16 +144,22 @@ func Install(config *config.Config, tlpdb *resolver.TLDatabase, roots []string, 
 
 	installJobs.UpdateJobStatus(updmapJobKey, InstallJobExecuting)
 	if err := texconfig.ExecuteUpdmap(config.TexDir, deps); err != nil {
-		fmt.Fprintf(logWriter, "⚠️ fast-updmap failed: %v", err)
+		fmt.Fprintf(logWriter, "⚠️ updmap failed: %v", err)
 		installJobs.UpdateJobStatusWithMessage(updmapJobKey, InstallJobCompleted, "Failed")
+		return err
 	} else {
 		installJobs.UpdateJobStatus(updmapJobKey, InstallJobCompleted)
 	}
 
 	installJobs.UpdateJobStatus(formatTexJobKey, InstallJobExecuting)
 	if err := texconfig.ExecuteFormatCommands(ctx, config, deps, &texCommandExecutor); err != nil {
-		fmt.Fprintf(logWriter, "⚠️ fast-fmtutil failed: %v", err)
+		if config.CompatMode {
+			fmt.Fprintf(logWriter, "⚠️ fmtutil-sys failed: %v", err)
+		} else {
+			fmt.Fprintf(logWriter, "⚠️ format commands failed: %v", err)
+		}
 		installJobs.UpdateJobStatusWithMessage(formatTexJobKey, InstallJobCompleted, "Failed")
+		return err
 	}
 	installJobs.UpdateJobStatus(formatTexJobKey, InstallJobCompleted)
 

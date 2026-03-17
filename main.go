@@ -14,6 +14,7 @@ import (
 func main() {
 	profile := flag.String("profile", "", "Path to configuration profile")
 	repository := flag.String("repository", mirror.DefaultRepositoryURL, "TeX Live repository URL")
+	compatMode := flag.Bool("compat", false, "Enable compatibility mode: use original fmtutil instead of faster implementation")
 	flag.Parse()
 
 	autoInstall := false
@@ -34,6 +35,10 @@ func main() {
 
 	if cfg == nil {
 		cfg = config.NewDefaultConfig()
+	}
+
+	if *compatMode {
+		cfg.CompatMode = true
 	}
 
 	if *repository != "" {
