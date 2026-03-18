@@ -41,8 +41,7 @@ func addUnixProfilePath(config *config.Config) error {
 		}
 		os.WriteFile(profilePath, []byte(line), 0644)
 	}
-	return fmt.Errorf("failed to update any profile files")
-
+	return nil
 }
 
 func addUnixSymlinks(config *config.Config) error {

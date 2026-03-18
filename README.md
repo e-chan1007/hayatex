@@ -1,5 +1,7 @@
 # HayaTeX: A Fast TeX Live Installer
 
+<img width="720" src="./screenshot.gif" alt="Screen recording of HayaTeX installation process">
+
 [日本語版はこちら (Japanese Version)](README_ja.md)
 
 HayaTeX (pronounced "hayate") is a TUI-based fast TeX Live installer written in Go.
@@ -7,7 +9,7 @@ HayaTeX (pronounced "hayate") is a TUI-based fast TeX Live installer written in 
 By leveraging parallel downloads and optimized configuration steps, HayaTeX significantly reduces the time required to set up a TeX Live environment.
 
 > [!TIP]
-> HayaTeX is named after the Japanese word "Hayate", which means "gale", a wind that blows hard and fast.
+> HayaTeX is named after the Japanese word "Hayate"(はやて), which means "gale", a wind that blows hard and fast.
 > The name reflects the goal of this installer: to provide a fast and efficient way to install TeX Live.
 >
 > The name is also known as the name of Japanese Shinkansen(bullet train).
@@ -46,5 +48,5 @@ You can also specify a configuration profile and mirror repository URL:
 > By default, HayaTeX uses a faster implementation for executing format commands, which may cause issues in some environments. If you encounter problems after installation, try running `fmtutil-sys --all` to regenerate format files. Alternatively, in the installation step, you can enable compatibility mode to use the standard `fmtutil` command instead of the faster implementation. This may increase installation time but can improve compatibility with certain TeX Live configurations.
 >
 > ```bash
-> ./hayatex -compat
+> ./hayatex --compat
 >```

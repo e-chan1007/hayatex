@@ -1,10 +1,12 @@
 # HayaTeX: A Fast TeX Live Installer
 
-HayaTeX は、Go言語で書かれたTUIベースの高速なTeX Liveインストーラーです。
+<img width="720" src="./screenshot.gif" alt="Screen recording of HayaTeX installation process">
+
+HayaTeX (はやて) は、Go言語で書かれたTUIベースの高速なTeX Liveインストーラーです。
 並列ダウンロードと構成の最適化により、TeX Live環境のセットアップにかかる時間を大幅に短縮します。
 
 > [!TIP]
-> HayaTeXは、日本語の「疾風(はやて)」と「TeX」にちなんで名付けられ、発音も「はやて」です。
+> HayaTeXは、日本語の「疾風(はやて)」と「TeX」にちなんで名付けられました。
 > 新幹線の名前としても知られるように、速く効率的なTeX Liveのインストールの象徴としています。
 
 ## 特徴
