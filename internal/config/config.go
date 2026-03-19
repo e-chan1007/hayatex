@@ -37,7 +37,7 @@ func NewDefaultConfig() *Config {
 		AddPath:            true,
 		InstallDocFiles:    false,
 		InstallSrcFiles:    false,
-		InstallForAllUsers: false,
+		InstallForAllUsers: isadmin.Check(),
 		SysBinDir:          "/usr/local/bin",
 		SysManDir:          "/usr/local/share/man",
 		SysInfoDir:         "/usr/local/share/info",
